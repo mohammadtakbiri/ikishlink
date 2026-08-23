@@ -1,1 +1,78 @@
+name: Update Subscription
 
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Subscription
+        run: |
+          curl -L --max-time 30 "${{ secrets.SUB_URL }}" -o raw.txt
+
+      - name: Decode if Base64
+        run: |
+          echo "RAW SIZE:"
+          wc -c raw.txt
+
+          if base64 -d raw.txt >/dev/null 2>&1; then
+            base64 -d raw.txt > decoded.txt
+            echo "FORMAT: BASE64"
+          else
+            cp raw.txt decoded.txt
+            echo "FORMAT: RAW"
+          fi
+
+      - name: Extract Nodes
+        run: |
+          grep -oE '(vless|vmess|ss|trojan|hysteria|hy2|tuic)://[^[:space:]]+' decoded.txt > nodes.txt || true
+
+          awk 'length($0)>20' nodes.txt \
+            | sed '/^$/d' \
+            | sort -u \
+            > clean.txt
+
+          mv clean.txt nodes.txt
+
+          echo "VALID LINKS:"
+          wc -l nodes.txt
+
+          echo "FIRST 5:"
+          head -5 nodes.txt || true
+
+      - name: Fail if Empty
+        run: |
+          if [ ! -s nodes.txt ]; then
+            echo "ERROR: No valid nodes found"
+            exit 1
+          fi
+
+      - name: Encode Subscription
+        run: |
+          base64 -w0 nodes.txt > sub.txt
+
+          echo "FINAL SIZE:"
+          wc -c sub.txt
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add sub.txt
+
+          git diff --cached --quiet && exit 0
+
+          git commit -m "update subscription"
+
+          git push
